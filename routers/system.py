@@ -24,7 +24,7 @@ async def validate_key(request: KeyValidationRequest):
         test_client = Groq(api_key=request.api_key)
         test_client.models.list()
         return {"valid": True}
-    except Exception as e:
+    except Exception:
         return JSONResponse(
             status_code=401, 
             content={"valid": False, "error": "Invalid API Key or connection failed"}

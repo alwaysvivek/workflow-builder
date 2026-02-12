@@ -1,8 +1,8 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Any
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
-from .prompts import ActionType
+from core.prompts import ActionType
 
 class WorkflowStep(BaseModel):
     action: ActionType
@@ -28,9 +28,7 @@ class WorkflowCreate(WorkflowBase):
 class WorkflowRead(WorkflowBase):
     id: UUID
     created_at: datetime
-    
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class WorkflowRunCreate(BaseModel):
     input_text: str
@@ -41,9 +39,7 @@ class WorkflowStepRunRead(BaseModel):
     step_order: int
     step_type: str
     output_text: str
-    
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class WorkflowRunRead(BaseModel):
     id: UUID
@@ -52,9 +48,7 @@ class WorkflowRunRead(BaseModel):
     status: str
     created_at: datetime
     step_runs: List[WorkflowStepRunRead] = []
-    
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class KeyValidationRequest(BaseModel):
     api_key: str

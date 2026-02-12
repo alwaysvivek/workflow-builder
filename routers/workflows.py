@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 from db.database import get_db, Workflow, WorkflowRun, WorkflowStepRun
 from core.schemas import WorkflowCreate, WorkflowRead, WorkflowRunCreate, WorkflowRunRead
 from services.llm import llm_service
@@ -66,43 +65,6 @@ async def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, 
          # Async generator can't rely on HTTP exceptions easily for the response, 
          # but we can yield an error JSON.
          pass # Handled inside generator
-
-    async def event_generator():
-        if not client:
-            yield json.dumps({"error": "API Key missing"}) + "\n"
-            return
-
-        current_input = run_request.input_text
-        steps = workflow.steps
-        
-        try:
-            for index, step in enumerate(steps):
-                action = step.get('action')
-                
-                # Start
-                yield json.dumps({"step": index + 1, "action": action, "status": "started"}) + "\n"
-                
-                # Run LLM
-                output_text = ""
-                async for chunk in llm_service.run_step_stream(client, action, current_input, index):
-                    # Passthrough chunk
-                    yield chunk
-                    # Capture full output if needed locally, but `run_step_stream` also returns it? 
-                    # Actually `run_step_stream` is an async generator, so it yields chunks.
-                    # We need to accumulate it here or let service handle it.
-                    # Let's adjust service logic. The service yields chunks. 
-                    # We need to reconstruct full_text to save to DB.
-                    pass 
-                
-                # Wait, I need the full text for DB.
-                # Redefine logic: I'll duplicate the accumulation here.
-                # Or better, make the service return full text at the end?
-                # Generator pattern complicates return. 
-                # I'll just accumulate chunks here.
-                pass 
-
-        except Exception as e:
-            yield json.dumps({"error": "Stream failed", "details": str(e)}) + "\n"
 
     # RE-WRITING GENERATOR LOGIC TO BE SELF-CONTAINED FOR SIMPLICITY AND DB ACCESS
     async def coherent_generator():
