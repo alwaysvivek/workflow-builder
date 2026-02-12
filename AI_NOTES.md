@@ -125,7 +125,12 @@ Groq
 ## 5. Coding Assistance
 
 **Tools Used:**
-ChatGPT (OpenAI) & Antigravity (Google)
+- **ChatGPT (OpenAI)**: Used for planning, requirement analysis, brainstorming workflow templates, and reasoning about action composability.
+- **Antigravity (Google)**: Used for hands-on coding, debugging, and file-level implementation. Primarily used **Gemini 3** for fast iteration and **Claude Opus** for complex multi-file edits.
+
+**Why Different Tools for Different Tasks:**
+- ChatGPT excels at conversational reasoning and design-phase tasks — extracting requirements from emails, comparing action sets, and thinking through edge cases. It was the right fit for the early planning prompts (1–4).
+- Antigravity is an agentic coding assistant that can read, edit, and run code directly in the project. This made it far more efficient for implementation tasks like setting up FastAPI routes, refactoring the project structure, fixing imports, and writing tests.
 
 **Purpose:**
 Assisted with generating boilerplate code, setting up the project structure (FastAPI, SQLAlchemy) & connection with database. Also used for writing and structuring README.md, as AI is well-suited for organizing documentation clearly and consistently.
