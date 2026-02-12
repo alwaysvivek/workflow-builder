@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="help-container">
+    <h1>Help & Documentation</h1>
+    <p class="subtitle">Understand exactly what each action does.</p>
+
+    <div class="card">
+        <table class="help-table">
+            <thead>
+                <tr>
+                    <th>Action</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><span class="badge">Clean</span></td>
+                    <td>Corrects grammar, spelling, and removes unnecessary whitespace. Keeps meaning intact.</td>
+                </tr>
+                <tr>
+                    <td><span class="badge">Summarize</span></td>
+                    <td>Condenses the text to capture main ideas and crucial details.</td>
+                </tr>
+                <tr>
+                    <td><span class="badge">Keypoints</span></td>
+                    <td>Extracts the most important points and presents them as a bulleted list.</td>
+                </tr>
+                <tr>
+                    <td><span class="badge">Simplify</span></td>
+                    <td>Rewrites the text in plain language, making it easy for anyone to understand.</td>
+                </tr>
+                <tr>
+                    <td><span class="badge">Analogy</span></td>
+                    <td>Provides a creative real-world analogy to explain the concept.</td>
+                </tr>
+                <tr>
+                    <td><span class="badge">Classify</span></td>
+                    <td>Categorizes the text into a specific topic, intent, or domain (e.g., "Sports", "Complaint").
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="badge">Tone</span></td>
+                    <td>Analyzes the sentiment (positive, negative, etc.) and explains why.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
