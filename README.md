@@ -2,6 +2,10 @@
 
 A simple, powerful web application to build and execute 3-step text processing workflows using Groq's LLM API.
 
+🌐 **Live Demo**: [workflow-builder-db32.onrender.com](https://workflow-builder-db32.onrender.com/)
+
+> **Note**: The app is hosted on Render's free tier, so it may take ~30 seconds to wake up on first visit if it has been inactive.
+
 ## ✨ Features
 
 - **3-Step Linear Workflows**: Chain actions like Clean, Summarize, Keypoints, Simplify, Analogy, Classify, and Tone Analysis.
@@ -20,11 +24,13 @@ A simple, powerful web application to build and execute 3-step text processing w
 
 ## 🚀 How to Run
 
+The simplest way is to visit the **[Live Demo](https://workflow-builder-db32.onrender.com/)**. Enter your Groq API key when prompted, and start building workflows.
+
 ### Option 1: Local Development
 
 1.  **Clone the repository**:
     ```bash
-    git clone <your-repo-url>
+    git clone https://github.com/alwaysvivek/workflow-builder.git
     cd workflow-builder
     ```
 
