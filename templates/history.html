@@ -13,6 +13,20 @@
 <script>
     document.addEventListener('DOMContentLoaded', loadFullHistory);
 
+    /**
+     * Escape HTML special characters to prevent XSS.
+     * Converts & < > " ' to their HTML entity equivalents.
+     */
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     async function loadFullHistory() {
         const container = document.getElementById('full-history-list');
         try {
@@ -28,14 +42,14 @@
             runs.forEach(run => {
                 const date = new Date(run.created_at).toLocaleString();
 
-                // Build steps HTML
+                // Build steps HTML — all dynamic values are escaped
                 let stepsHtml = '';
                 if (run.step_runs && run.step_runs.length > 0) {
                     run.step_runs.forEach(step => {
                         stepsHtml += `
                         <div class="step-detail">
-                            <strong>Step ${step.step_order} (${step.step_type}):</strong>
-                            <pre>${step.output_text}</pre>
+                            <strong>Step ${escapeHtml(step.step_order)} (${escapeHtml(step.step_type)}):</strong>
+                            <pre>${escapeHtml(step.output_text)}</pre>
                         </div>
                     `;
                     });
@@ -47,14 +61,14 @@
                 div.className = 'history-card-detailed';
                 div.innerHTML = `
                 <div class="history-header">
-                    <span class="run-id">ID: ${run.id}</span>
-                    <span class="run-date">${date}</span>
-                    <span class="status-indicator ${run.status}">${run.status}</span>
+                    <span class="run-id">ID: ${escapeHtml(run.id)}</span>
+                    <span class="run-date">${escapeHtml(date)}</span>
+                    <span class="status-indicator ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
                 </div>
                 <div class="history-body">
                     <div class="input-section">
                         <strong>Input:</strong>
-                        <p>${run.input_text}</p>
+                        <p>${escapeHtml(run.input_text)}</p>
                     </div>
                     <div class="steps-section">
                         ${stepsHtml}
@@ -65,7 +79,7 @@
             });
 
         } catch (e) {
-            container.innerHTML = `<p class="error">Failed to load history: ${e.message}</p>`;
+            container.textContent = 'Failed to load history: ' + e.message;
         }
     }
 </script>

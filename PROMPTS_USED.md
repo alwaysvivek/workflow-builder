@@ -112,3 +112,49 @@ This file documents the exact prompts used during the development of this projec
 **Manual Verification:**
 -   **Checked for:** Import errors.
 -   **Fixed:** Moving files broke several imports (e.g., `from db import ...`). I manually went through `main.py` and `routers/*.py` to fix the relative/absolute imports that the AI-generated refactor script missed.
+
+## 11. Post-Audit: Security & Operational Hardening
+**Prompt:**
+> "Here's the audit feedback. There are 3 critical issues: Persistent XSS in history rendering, zero structured logging, and blocking sync patterns in async routes. Help me fix these without breaking anything else."
+
+**What I Did:**
+- Reviewed the audit feedback and identified the three specific issues causing the -55 technical penalty
+- Prioritized fixes by severity: XSS (critical) → Logging (medium) → Async (medium)
+
+**Manual Verification:**
+- **XSS:** Traced all 5 injection points in the history template. Tested by pasting `<script>alert('xss')</script>` as input, opened Chrome DevTools, confirmed it renders as escaped text in the DOM.
+- **Logging:** Ran `grep` to confirm zero `print()` statements remain. Ran the server locally and checked JSON log output on stdout for correct fields.
+- **Async:** Ran `grep` to confirm no `async def` routes call blocking code.
+- **Regression:** All 4 pytest tests passed.
+
+## 12. Post-Audit: Input Sanitization & Structured Output Validation
+**Prompt:**
+> "Add zero-trust input sanitization at every layer and use structured output validation with Pydantic for LLM responses."
+
+**What I Did:**
+- Created `core/sanitizer.py` with `sanitize_text()` and `sanitize_name()` — strips HTML tags via regex, escapes HTML entities via `html.escape()`, trims whitespace, enforces max length
+- Added Pydantic `@field_validator` on all user-facing fields: `name`, `description`, `input_text`, `api_key` in `core/schemas.py`
+- Created `LLMStepOutput` Pydantic model to validate each LLM step's output (non-empty, trimmed) before passing it to the next step
+- Integrated `LLMStepOutput` validation into the streaming generator in `routers/workflows.py`
+
+**Manual Verification:**
+- **Sanitization placement:** Chose the Pydantic schema layer so sanitization runs automatically for every route — no per-route logic needed    
+- **Max lengths:** Set 200 (names), 1000 (descriptions), 10000 (input text), 256 (API keys) based on reasonable usage limits
+- **LLM validation:** Validated *after* DB persistence but *before* next step — raw output is still saved for debugging even if validation fails
+- **Regression Testing:** Ran `pytest tests/test_workflow.py tests/test_run_limit.py` — all 4 tests passed
+
+## 13. Post-Audit: Retry/Repair Logic for LLM Steps
+**Prompt:**
+> "If a step fails or returns empty, automatically retry once with a modified prompt that includes the error context."
+
+**What I Did:**
+- Added a `MAX_RETRIES = 1` while-loop around the LLM stream call in `routers/workflows.py`
+- On empty output, prepends "The previous attempt returned an empty response" to the prompt and retries
+- Emits `{"status": "retrying"}` events for frontend visibility
+- Logs retries via `logger.warning` with step/action context
+
+**Manual Verification:**
+- Verified the retry loop only triggers on empty/whitespace output, not on valid short responses
+- Confirmed the repair prompt wraps the *full original prompt* (not just raw input), preserving LLM context
+- **Hands-on test:** Ran the retry prompt logic in a separate Python script outside the project to verify the repair prompt construction is correct and the LLM responds meaningfully on retry. Tested with empty input to confirm the retry path activates.
+- Regression Testing: All 4 tests passed

@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from db.database import get_db, Workflow, WorkflowRun, WorkflowStepRun
-from core.schemas import WorkflowCreate, WorkflowRead, WorkflowRunCreate, WorkflowRunRead
+from core.schemas import WorkflowCreate, WorkflowRead, WorkflowRunCreate, WorkflowRunRead, LLMStepOutput
+from core.logging_config import get_logger
 from services.llm import llm_service
 from core.prompts import PROMPTS
 import json
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+logger = get_logger(__name__)
 
 @router.post("", response_model=WorkflowRead)
 def create_workflow(workflow: WorkflowCreate, db: Session = Depends(get_db)):
@@ -19,15 +21,14 @@ def create_workflow(workflow: WorkflowCreate, db: Session = Depends(get_db)):
     db.add(db_workflow)
     db.commit()
     db.refresh(db_workflow)
+    logger.info(
+        "Workflow created",
+        extra={"workflow_id": str(db_workflow.id)},
+    )
     return db_workflow
 
 @router.post("/{workflow_id}/run", response_model=WorkflowRunRead)
 def run_workflow_sync(workflow_id: str, run_request: WorkflowRunCreate, db: Session = Depends(get_db)):
-    # Legacy sync run (placeholder or remove if only streaming used)
-    # The user asked for streaming, but we'll keep this as a stub or implementation if needed.
-    # For now, let's just return 404 or implement basic logic if needed.
-    # Given the requirements, streaming is key. I'll implement a basic sync version or just pass.
-    # Actually, let's just implement the record creation to be safe.
     workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -40,10 +41,14 @@ def run_workflow_sync(workflow_id: str, run_request: WorkflowRunCreate, db: Sess
     db.add(db_run)
     db.commit()
     db.refresh(db_run)
+    logger.info(
+        "Sync workflow run created",
+        extra={"workflow_id": workflow_id, "run_id": str(db_run.id)},
+    )
     return db_run
 
 @router.post("/{workflow_id}/run_stream")
-async def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, request: Request, db: Session = Depends(get_db)):
+def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, request: Request, db: Session = Depends(get_db)):
     workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -58,17 +63,21 @@ async def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, 
     db.commit()
     db.refresh(db_run)
 
+    run_id = str(db_run.id)
+    logger.info(
+        "Streaming workflow run started",
+        extra={"workflow_id": workflow_id, "run_id": run_id},
+    )
+
     # Get API Key
     header_key = request.headers.get("x-groq-api-key")
     client = llm_service.get_client(header_key)
-    if not client:
-         # Async generator can't rely on HTTP exceptions easily for the response, 
-         # but we can yield an error JSON.
-         pass # Handled inside generator
 
-    # RE-WRITING GENERATOR LOGIC TO BE SELF-CONTAINED FOR SIMPLICITY AND DB ACCESS
-    async def coherent_generator():
+    # Sync generator — StreamingResponse will run this in a threadpool,
+    # so blocking Groq SDK calls do NOT block the async event loop.
+    def coherent_generator():
         if not client:
+            logger.warning("API key missing for streaming run", extra={"run_id": run_id})
             yield json.dumps({"error": "API Key missing"}) + "\n"
             return
 
@@ -81,21 +90,43 @@ async def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, 
                 
                 prompt = PROMPTS.get(action).format(input_text=current_input)
                 
-                # Stream Call
-                stream = client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
-                    model="llama-3.3-70b-versatile",
-                    stream=True
-                )
-                
+                MAX_RETRIES = 1
                 step_output = ""
-                for chunk in stream:
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        step_output += content
-                        yield json.dumps({"step": index + 1, "chunk": content}) + "\n"
+                attempt = 0
                 
-                # Save Step
+                while attempt <= MAX_RETRIES:
+                    # Sync stream call — safe inside sync generator
+                    stream = client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama-3.3-70b-versatile",
+                        stream=True
+                    )
+                    
+                    step_output = ""
+                    for chunk in stream:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            step_output += content
+                            yield json.dumps({"step": index + 1, "chunk": content}) + "\n"
+                    
+                    # If output is non-empty, break out — success
+                    if step_output.strip():
+                        break
+                    
+                    # Empty output — retry with repair prompt
+                    attempt += 1
+                    if attempt <= MAX_RETRIES:
+                        logger.warning(
+                            "Empty LLM output, retrying with repair prompt",
+                            extra={"run_id": run_id, "step": index + 1, "action": action, "attempt": attempt},
+                        )
+                        yield json.dumps({"step": index + 1, "status": "retrying", "reason": "empty output"}) + "\n"
+                        prompt = (
+                            f"The previous attempt returned an empty response. "
+                            f"Please try again carefully.\n\n{prompt}"
+                        )
+                
+                # Save Step (even if output is empty after retries)
                 step_run = WorkflowStepRun(
                     workflow_run_id=db_run.id,
                     step_order=index + 1,
@@ -105,21 +136,37 @@ async def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, 
                 db.add(step_run)
                 db.commit()
                 
-                current_input = step_output
-                yield json.dumps({"step": index + 1, "status": "completed", "final_output": step_output}) + "\n"
+                # Validate step output with Pydantic before passing to next step
+                validated = LLMStepOutput(
+                    content=step_output,
+                    step_order=index + 1,
+                    action=action,
+                )
+
+                logger.info(
+                    "Step completed",
+                    extra={"run_id": run_id, "step": index + 1, "action": action, "attempts": attempt + 1},
+                )
+                
+                current_input = validated.content
+                yield json.dumps({"step": index + 1, "status": "completed", "final_output": validated.content}) + "\n"
             
             # Complete Run
             db_run.status = "completed"
             db.commit()
+            logger.info("Workflow run completed", extra={"run_id": run_id})
             
-            # Cleanup (Limit 5)
-            # ... (Simplified cleanup call)
-            yield json.dumps({"status": "workflow_completed", "run_id": str(db_run.id)}) + "\n"
+            yield json.dumps({"status": "workflow_completed", "run_id": run_id}) + "\n"
             
         except Exception as e:
-            print(f"Error: {e}")
+            logger.error(
+                "Workflow run failed",
+                extra={"run_id": run_id},
+                exc_info=True,
+            )
             db_run.status = "failed"
             db.commit()
             yield json.dumps({"error": str(e)}) + "\n"
 
     return StreamingResponse(coherent_generator(), media_type="application/x-ndjson")
+

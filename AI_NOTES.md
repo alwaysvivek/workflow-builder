@@ -136,3 +136,71 @@ Groq
 Assisted with generating boilerplate code, setting up the project structure (FastAPI, SQLAlchemy) & connection with database. Also used for writing and structuring README.md, as AI is well-suited for organizing documentation clearly and consistently.
 
 ---
+
+## 6. Post-Audit Fixes
+
+After receiving the technical audit (scored 40.5/100 with a -55 penalty for operational gaps), I fixed all three flagged issues plus implemented the Growth Roadmap items. The initial submission focused on core functionality and real-time streaming. After receiving the audit, I used the feedback to add production-grade hardening — security, logging, and validation.
+
+### XSS Fix
+
+The history page was rendering user data (`input_text`, `output_text`, `step_type`) directly via `innerHTML` with no escaping — classic stored XSS.
+
+I couldn't just swap to `textContent` because the history cards are built as full HTML structures (divs, spans, pre tags with CSS classes) inside template literals. Using `textContent` would've destroyed the layout. Jinja `| e` wasn't applicable either since history rendering is client-side via `fetch('/runs')` + JS, not server-side templates.
+
+So I added an `escapeHtml()` helper that converts `& < > " '` to HTML entities, and wrapped every dynamic value with it (5 injection points total). Also switched the error catch block to `textContent` since that one is just plain text.
+
+Tested by opening the history page, inspecting the DOM in Chrome DevTools, and confirming that `<script>alert('xss')</script>` renders as literal escaped text, not as an executable script.
+
+**AI used for:** Writing the `escapeHtml()` function. I manually went through the `history.html` template literal line by line to find all 5 injection points — `input_text`, `output_text`, `step_type`, status badge, and the run ID header. Also checked `app.js` to make sure its `innerHTML` usages only insert hardcoded action labels, not user data. Tested in Chrome DevTools by pasting script tags as workflow input and confirming they render as escaped text.
+
+### Structured JSON Logging
+
+The app had literally one `print(f"Error: {e}")` statement and nothing else. No request logging, no structured output.
+
+I went with Python's stdlib `logging` module instead of adding structlog or loguru — didn't want new dependencies for something this straightforward. Created `core/logging_config.py` with a custom `JsonFormatter` that outputs single-line JSON with `timestamp`, `level`, `logger`, `message`, and contextual fields. Added request logging middleware in `main.py` that captures method, path, status code, and duration for every request. Replaced all `print()` calls with proper logger calls.
+
+Tested by running the server locally, hitting different endpoints, and checking that the JSON output on stdout had the right fields and format.
+
+**AI used for:** Generating the `JsonFormatter` class boilerplate. I decided which fields to log (went with `timestamp`, `level`, `message`, `method`, `path`, `status_code`, `duration_ms` — the standard set you'd want for debugging production issues). Ran `grep -rn 'print('` across all source files to make sure none were left. Tested by running the server, hitting GET and POST endpoints, and reading the JSON lines in stdout to confirm they parse correctly.
+
+### Async Blocking Fix
+
+`run_workflow_stream` and `validate_key` were both `async def` but called blocking sync code (Groq SDK). This blocks the event loop.
+
+I just removed the `async` keyword. FastAPI runs `def` routes in a threadpool automatically, so blocking calls are fine. Much simpler than wrapping everything in `run_in_threadpool()` or switching to `AsyncGroq` (which would've meant rewriting the stream logic).
+
+Verified via `grep` that no remaining `async def` routes have blocking code. The `async def` routes in `pages.py` just return Jinja templates which is correct.
+
+**AI used for:** Confirming that removing `async` was the right approach for FastAPI. I ran `grep -rn 'async def' routers/` to check which routes were still async — only `pages.py` (Jinja template rendering, which is non-blocking). Verified the Groq SDK returns sync iterators, not async ones, so keeping `async def` was the actual bug. Ran all 4 tests after the change.
+
+### Input Sanitization (Defense in Depth)
+
+Even with frontend escaping, a direct API call could bypass it and store malicious payloads. So I added server-side sanitization at the Pydantic schema layer — every user-facing field (`name`, `description`, `input_text`, `api_key`) goes through `sanitize_text()` or `sanitize_name()` via `@field_validator` before any route logic runs. These strip HTML tags, escape entities, trim whitespace, and enforce max lengths.
+
+Created `core/sanitizer.py` using stdlib `html.escape()` and `re.sub` for tag stripping — no new dependencies.
+
+**AI used for:** Generating the `sanitize_text()` and `sanitize_name()` functions. I decided to put sanitization at the Pydantic `@field_validator` layer instead of per-route — this way any new route that uses these schemas gets automatic sanitization without remembering to call it. Picked the max lengths based on realistic usage: 200 for workflow names, 1000 for descriptions, 10000 for input text (LLMs can handle long input), 256 for API keys.
+
+### Structured Output Validation (Pydantic)
+
+LLM step outputs were being passed as raw strings between steps with no checks. If the LLM returned empty, it'd silently chain garbage through the workflow.
+
+Added an `LLMStepOutput` Pydantic model in `core/schemas.py` that validates each step's output is non-empty before passing it to the next step. Integrated into the streaming generator in `workflows.py`. I validate after DB persistence but before the next step — so we still have the raw output saved for debugging even if validation fails.
+
+**AI used for:** Writing the `LLMStepOutput` Pydantic model. I decided to validate after saving the step to the DB but before passing output to the next step — this way even if validation fails, we still have the raw LLM response saved for debugging. Content emptiness is the critical check since a blank output would produce garbage in all downstream steps.
+
+### Retry/Repair Logic
+
+If an LLM step returns empty output, it now retries once with a repair prompt: "The previous attempt returned an empty response. Please try again carefully." + the original prompt.
+
+Kept it simple — a while loop with `MAX_RETRIES = 1`. Emits a `{"status": "retrying"}` event so the frontend knows what's happening. Logs each retry via `logger.warning`. If both attempts fail, Pydantic validation catches it downstream.
+
+Chose a while-loop over `tenacity` or similar retry libraries — no need for new dependencies for a single retry.
+
+Tested the retry prompt logic separately in a standalone Python script to make sure the prompt construction was right and the LLM actually responds meaningfully on retry.
+
+**AI used for:** Implementing the retry loop structure. I tested the repair prompt in a separate Python script to make sure the LLM actually gives a meaningful response when you prepend "The previous attempt returned an empty response" to the original prompt. Also verified that the `{"status": "retrying"}` SSE event is compatible with the existing frontend event parser so it doesn't break the streaming UI.
+
+### Removed Dead Code
+
+Cleaned up `services/llm.py` — removed an unused `async def run_step_stream()` function that had blocking sync code inside it. The streaming logic lives inline in `workflows.py` now. Also removed its unused imports (`json`, `PROMPTS`).
