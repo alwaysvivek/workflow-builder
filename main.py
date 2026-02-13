@@ -2,6 +2,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import time
 
 from core.config import settings
@@ -16,7 +20,41 @@ logger = get_logger(__name__)
 # Create Tables
 Base.metadata.create_all(bind=engine)
 
+# Rate limiter (uses client IP by default)
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS — restrict to same-origin; add explicit origins if frontend is hosted separately
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "https://workflow-builder-db32.onrender.com",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "x-groq-api-key"],
+)
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    return response
 
 # Request logging middleware
 @app.middleware("http")
@@ -59,3 +97,4 @@ async def validation_exception_handler(request, exc):
         status_code=422,
         content={"detail": "Validation Error", "errors": errors},
     )
+

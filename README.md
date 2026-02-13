@@ -15,12 +15,23 @@ A simple, powerful web application to build and execute 3-step text processing w
 - **Simple UI**: Clean, responsive interface built with HTML/CSS and Vanilla JS.
 - **Health Monitoring**: Status page to check backend and database health.
 
+## 🔒 Security
+
+- **Rate Limiting**: SlowAPI-based per-IP rate limits on sensitive endpoints (`/validate-key`: 10/min, `/run_stream`: 5/min, `/health`: 30/min).
+- **CORS Policy**: Restrictive `CORSMiddleware` — only allows requests from the app's own origins.
+- **Security Headers**: Every response includes `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy`.
+- **Input Sanitization**: All user input is sanitized server-side via Pydantic validators (HTML stripping, entity escaping, length limits) before reaching the database or LLM.
+- **XSS Prevention**: Client-side `escapeHtml()` on all dynamic content, plus server-side sanitization as defense-in-depth.
+- **Error Handling**: Generic error messages returned to clients; full stack traces logged server-side only.
+- **Docker Hardening**: Runs as non-root user with `--proxy-headers` for correct client IP forwarding.
+
 ## 🛠️ Tech Stack
 
 - **Backend**: FastAPI (Python)
 - **Database**: PostgreSQL
 - **Frontend**: Jinja2 Templates, Vanilla JavaScript, CSS variables
-- **LLM**: Groq API (Llama 3 models)
+- **LLM**: Groq API (Llama 3.3 70B Versatile)
+- **Security**: SlowAPI (rate limiting), CORSMiddleware
 
 ## 🚀 How to Run
 

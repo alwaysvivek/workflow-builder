@@ -204,3 +204,48 @@ Tested the retry prompt logic separately in a standalone Python script to make s
 ### Removed Dead Code
 
 Cleaned up `services/llm.py` — removed an unused `async def run_step_stream()` function that had blocking sync code inside it. The streaming logic lives inline in `workflows.py` now. Also removed its unused imports (`json`, `PROMPTS`).
+
+---
+
+## 7. Production Hardening (Round 2)
+
+After the first round of post-audit fixes, a second security audit identified additional infrastructure-level gaps. These were all addressed:
+
+### Exception Detail Leakage Fix
+
+The `/health` endpoint was returning raw exception messages (database host, port, driver errors) in the HTTP response via `f"Database connection failed: {str(e)}"`. The `/run_stream` endpoint was streaming raw Groq SDK errors via `str(e)`. Both now return generic messages ("Service unavailable" / "Workflow execution failed. Please try again.") while the full stack trace is still logged server-side via `exc_info=True`.
+
+**AI used for:** Identifying the leakage points during the audit. I changed the error messages to generic strings and verified the logger still captures the full exception.
+
+### Rate Limiting (SlowAPI)
+
+Added `slowapi` for per-IP rate limiting on the three most abuse-prone endpoints:
+- `/validate-key`: 10 requests/minute (prevents API key brute-forcing)
+- `/run_stream`: 5 requests/minute (prevents unlimited LLM cost)
+- `/health`: 30 requests/minute (prevents monitoring abuse)
+
+Chose `slowapi` because it wraps `limits` and integrates directly with FastAPI via decorators — no custom middleware needed. The limiter uses `get_remote_address` for IP extraction.
+
+**AI used for:** Setting up the SlowAPI boilerplate (Limiter init, exception handler registration, decorator syntax). I decided on the specific rate limits based on realistic usage patterns.
+
+### CORS Policy
+
+Added `CORSMiddleware` with an explicit allowlist: `localhost:8000`, `127.0.0.1:8000`, and the Render deployment URL. Only `GET` and `POST` methods are allowed. Only `Content-Type` and `x-groq-api-key` headers are whitelisted.
+
+**AI used for:** Generating the middleware config. I selected the specific origins and headers to whitelist.
+
+### Security Headers
+
+Added a response middleware that sets four security headers on every response:
+- `X-Content-Type-Options: nosniff` — prevents MIME-type sniffing
+- `X-Frame-Options: DENY` — prevents clickjacking via iframes
+- `Referrer-Policy: strict-origin-when-cross-origin` — limits referrer leakage
+- `Content-Security-Policy` — restricts script/style/font/image sources to self and Google Fonts (needed for the Inter font)
+
+**AI used for:** Generating the CSP directive string. I tailored the policy to allow Google Fonts (used in `layout.html`) and `unsafe-inline` for the inline `<script>` and `<style>` blocks in the templates.
+
+### Docker Hardening
+
+- Added a non-root `appuser` in the Dockerfile (`RUN adduser --disabled-password --gecos "" appuser` + `USER appuser`)
+- Added `--proxy-headers` to the uvicorn CMD for correct client IP logging behind reverse proxies
+

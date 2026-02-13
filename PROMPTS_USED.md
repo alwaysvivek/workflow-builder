@@ -158,3 +158,31 @@ This file documents the exact prompts used during the development of this projec
 - Confirmed the repair prompt wraps the *full original prompt* (not just raw input), preserving LLM context
 - **Hands-on test:** Ran the retry prompt logic in a separate Python script outside the project to verify the repair prompt construction is correct and the LLM responds meaningfully on retry. Tested with empty input to confirm the retry path activates.
 - Regression Testing: All 4 tests passed
+
+## 14. Security Audit (Round 2)
+**Prompt:**
+> "Do a full security edit to let me of any significant issues to harden it for production-grade."
+
+**What Happened:**
+-   Ran a full security audit across every source file (routers, core, services, templates, static JS, Dockerfile, docker-compose, tests)
+-   The audit confirmed all first-round fixes (XSS, input sanitization, async blocking, structured logging) were properly implemented
+-   Identified 9 additional infrastructure-level issues categorized by severity (2 high, 3 medium, 4 low)
+
+**Manual Verification:**
+-   Reviewed the audit report and triaged each issue by real-world impact
+-   Decided which issues to fix immediately vs. document as known trade-offs (e.g., API key in `sessionStorage` is intentional for a bring-your-own-key app)
+
+## 15. Production Hardening (Round 2)
+**Prompt:**
+> "Implement the SlowAPI boilerplate, and a CORS policy along with a CSP directive string."
+
+**What I Did:**
+-   **SlowAPI setup:** Initialized `Limiter` with `get_remote_address` in `main.py`, registered the `RateLimitExceeded` exception handler on the app, and added `@limiter.limit()` decorators on the three most abuse-prone endpoints — `/validate-key` (10/min), `/run_stream` (5/min), `/health` (30/min). Each rate-limited route handler takes `request: Request` as its first parameter (required by SlowAPI).
+-   **CORS policy:** Added `CORSMiddleware` in `main.py` with an explicit origin allowlist (`localhost:8000`, `127.0.0.1:8000`, Render deployment URL). Restricted allowed methods to `GET`/`POST` and whitelisted only `Content-Type` and `x-groq-api-key` headers.
+-   **CSP directive:** Added a response middleware that sets `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`. The CSP allows `self`, Google Fonts (`fonts.googleapis.com` for styles, `fonts.gstatic.com` for font files), and `unsafe-inline` for the inline `<script>` and `<style>` blocks used in Jinja templates.
+
+**Manual Verification:**
+-   Ran `py_compile` on all 3 modified files (`main.py`, `routers/system.py`, `routers/workflows.py`) — all passed
+-   Verified the CSP allows Google Fonts (used in `layout.html` for Inter font) and `unsafe-inline` for template scripts/styles
+-   Confirmed `slowapi` decorator syntax is compatible with FastAPI's `Request` parameter requirement
+-   Reviewed rate limit values against realistic usage: 5 workflow runs/min is generous for a single user but prevents bulk abuse

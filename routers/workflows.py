@@ -6,10 +6,13 @@ from core.schemas import WorkflowCreate, WorkflowRead, WorkflowRunCreate, Workfl
 from core.logging_config import get_logger
 from services.llm import llm_service
 from core.prompts import PROMPTS
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 import json
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 logger = get_logger(__name__)
+limiter = Limiter(key_func=get_remote_address)
 
 @router.post("", response_model=WorkflowRead)
 def create_workflow(workflow: WorkflowCreate, db: Session = Depends(get_db)):
@@ -48,6 +51,7 @@ def run_workflow_sync(workflow_id: str, run_request: WorkflowRunCreate, db: Sess
     return db_run
 
 @router.post("/{workflow_id}/run_stream")
+@limiter.limit("5/minute")
 def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, request: Request, db: Session = Depends(get_db)):
     workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
     if not workflow:
@@ -158,7 +162,7 @@ def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, reques
             
             yield json.dumps({"status": "workflow_completed", "run_id": run_id}) + "\n"
             
-        except Exception as e:
+        except Exception:
             logger.error(
                 "Workflow run failed",
                 extra={"run_id": run_id},
@@ -166,7 +170,8 @@ def run_workflow_stream(workflow_id: str, run_request: WorkflowRunCreate, reques
             )
             db_run.status = "failed"
             db.commit()
-            yield json.dumps({"error": str(e)}) + "\n"
+            yield json.dumps({"error": "Workflow execution failed. Please try again."}) + "\n"
 
     return StreamingResponse(coherent_generator(), media_type="application/x-ndjson")
+
 
